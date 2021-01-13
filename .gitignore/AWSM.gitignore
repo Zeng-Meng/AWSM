@@ -1,0 +1,262 @@
+clc;clear;
+%% Parameter Setting
+[mu,sigma,type,ng]=distribution;
+m=1e3; % Sample size for each sampling process
+ngt=3; % Number of subsets 
+n=length(mu);
+x=zeros(m,n);
+z=zeros(m,1);
+[low,upp]=intervalx(mu,sigma,type,n);
+%% Threshold of each subset
+[low,upp,ggt,pf,x,ngtrue]=meshgt(low,upp,mu,sigma,type,m,n,ngt);
+%% Space reduction strategy
+ppf(1)=pf; 
+for i=1:ngtrue-1
+  gt=ggt(i);
+  gtold=ggt(i+1);
+  [min_x,max_x,pf,x]=mainsub(low,upp,mu,sigma,type,m,n,gt,gtold,x);
+  low=min_x;
+  upp=max_x;
+  ppf(i+1)=pf;
+end
+%% Output Results
+ggt;    % Threshold
+ppf;    % Conditional probability
+Pf=prod(ppf) % Failure probability 
+P=1-Pf;
+beta=norminv(P) % Reliability index
+
+
+clc;clear;
+[mu,sigma,type,ng]=distribution;
+mr=1e5; % Sample size
+m=mr;
+ns=mr/m;
+n=length(mu);
+x=zeros(m,n);
+z=zeros(m,1);
+for i=1:1:n
+     if type(i)==0
+        a=mu(i)-sqrt(3)*sigma(i);
+        b=mu(i)+sqrt(3)*sigma(i);
+        z=random('unif',a,b,m,1);
+        x(1:m,i)=z(1:m,1);
+      elseif type(i)==1
+        z=normrnd(mu(i),sigma(i),m,1);
+        x(1:m,i)=z(1:m,1);
+      elseif type(i)==2  
+        sln=sqrt(log(1+(sigma(i)/mu(i))^2));
+        mln=log(mu(i))-sln^2/2;
+        z=lognrnd(mln,sln,m,1);
+        x(1:m,i)=z(1:m,1);
+      elseif type(i)==3   
+        aev=sqrt(6)*sigma(i)/pi;
+        uev=-psi(1)*aev+mu(i);
+        z=evrnd(uev,aev,m,1);
+        x(1:m,i)=z(1:m,1);
+      elseif type(i)==4
+        z=random('wbl',mu(i),sigma(i),m,1);
+        x(1:m,i)=z(1:m,1);
+    end
+end
+   k=zeros(ng,1);
+   gg=zeros(ng,1);
+  for i=1:1:m
+   xx=x(i,:);
+   gg(:,1)=fval(xx);
+   k=k+(gg>=zeros(ng,1));
+   p=k/m;
+  end
+for j=1:1:ng
+    pro(j)=p(j);
+    pf(j)=1-pro(j);
+    beta(j)=norminv(pro(j));
+end
+pro;
+pf
+beta
+
+
+      
+function [low,upp,pf,x]=mainsub(low,upp,mu,sigma,type,m,n,gt,gtold,x);
+z=lhsamp(m,n);
+for i=1:n
+    xnew(1:m,i)=z(1:m,i)*(upp(i)-low(i))+low(i);
+end
+x=[x;xnew]; [m,~]=size(x);
+w=ones(m,1);
+ffval=ones(m,1);
+for i=1:m
+    for j=1:n
+     w(i)=randompdf(x(i,j),mu(j),sigma(j),type(j))*w(i);
+    end
+end
+for i=1:m
+    xx=x(i,:);
+    ffval(i)=fval(xx);
+end
+chorome=[x,ffval];
+gsort=sortrows(chorome,n+1);
+zhib1=(ffval<gt)*1;                                    
+wz1=zhib1.*w;
+zhib=(ffval<gtold)*1;
+wz2=zhib.*w;
+pf=sum(wz2)/sum(wz1); 
+numg=sum(zhib);
+for i=1:n
+    min_x(i)=min(gsort(1:numg,i)); 
+    max_x(i)=max(gsort(1:numg,i)); 
+    mincha=abs(min_x(i)-low(i));
+    maxcha=abs(max_x(i)-upp(i));
+    if maxcha>mincha
+        upp(i)=min([max_x(i)+0.01*abs(max_x(i)-min_x(i)),upp(i)]);
+    else
+        low(i)=max([min_x(i)-0.01*abs(max_x(i)-min_x(i)),low(i)]);
+    end
+    id=x(:,i)<low(i) | x(:,i)>upp(i);
+    x(id,:)=[];
+end
+
+
+ 
+function [low,upp,ggt,ppf,x,ngtrue]=meshgt(low,upp,mu,sigma,type,m,n,ngt);
+z=lhsamp(m,n);
+for i=1:n
+    x(1:m,i)=z(1:m,i)*(upp(i)-low(i))+low(i);
+end
+ w=ones(m,1);
+for i=1:m
+    for j=1:n
+     w(i)=randompdf(x(i,j),mu(j),sigma(j),type(j))*w(i);
+    end
+end
+ffval=ones(m,1);
+for i=1:m
+    xx=x(i,:);
+    ffval(i)=fval(xx);
+end
+ chorome=[x,ffval];
+ gsort=sortrows(chorome,n+1);                                 
+for i=1:ngt
+  p0=(0.5)^i;
+  options=optimset('TolFun',1e-10,'TolX',1e-10);         
+  [zgt,obj,EXITFLAG,OUTPUT] = fminbnd(@(x) subfun(x,ffval,p0),gsort(1,n+1),gsort(m,n+1),options); 
+   if i==ngt 
+       zgt=0;
+   end
+   zhib=(ffval<zgt)*1; 
+   wz=zhib.*w;
+   pf(i)=sum(wz)/sum(w);
+   numg(i)=sum(zhib);    
+   ggt(i)=zgt;  
+end
+ggt(ggt<0)=[];ngtrue=length(ggt);
+ppf=pf(1);
+nnumg=numg(1); 
+for i=1:n
+    min_x(i)=min(gsort(1:numg,i)); 
+    max_x(i)=max(gsort(1:numg,i)); 
+    mincha=abs(min_x(i)-low(i));
+    maxcha=abs(max_x(i)-upp(i));
+    if maxcha>mincha
+        upp(i)=min([max_x(i)+0.06*(max_x(i)-min_x(i)),upp(i)]);
+    else
+        low(i)=max([min_x(i)-0.06*(max_x(i)-min_x(i)),low(i)]);
+    end
+    id=x(:,i)<low(i) | x(:,i)>upp(i);
+    x(id,:)=[];
+end
+ 
+
+ 
+
+
+function f=randompdf(x,mu,sigma,type)
+if type==0
+       a=mu-sqrt(3)*sigma;
+       b=mu+sqrt(3)*sigma;
+       f=unifpdf(x,a,b);
+elseif type==1
+       f=normpdf(x,mu,sigma);
+elseif type==2
+       sln=sqrt(log(1+(sigma/mu)^2));
+       mln=log(mu)-sln^2/2;
+       f=lognpdf(x,mln,sln);
+elseif type==3
+       aev=sqrt(6)*sigma/pi;
+       uev=-psi(1)*aev-mu;
+       f=evpdf(-x,uev,aev);     
+elseif type==4
+       f=wblpdf(x,mu,sigma);
+end
+function f=subfun(x,ffval,p0)
+zhib=(ffval<x)*1;
+wz=sum(zhib);w=length(zhib);
+pf=wz/w;
+f=abs(p0-pf)*10000; 
+function [mu,sigma,type,m]=distribution;
+mu=[0;0]';
+type=[1;1];
+sigma=[1;1]';
+m=1;
+function g=fval(x)
+g(1)=exp(0.2*x(1)+1.4)-x(2);
+
+function [low,upp]=intervalx(mu,sigma,type,n);
+mm=1e5;
+x=zeros(mm,n);z=zeros(mm,1);
+for i=1:1:n
+    if type(i)==0
+        a=mu(i)-sqrt(3)*sigma(i);
+        b=mu(i)+sqrt(3)*sigma(i);
+        z=random('unif',a,b,mm,1);
+        x(1:mm,i)=z(1:mm,1);
+     elseif type(i)==1
+        z=normrnd(mu(i),sigma(i),mm,1);
+        x(1:mm,i)=z(1:mm,1);
+     elseif type(i)==2   
+        sln=sqrt(log(1+(sigma(i)/mu(i))^2));
+        mln=log(mu(i))-sln^2/2;
+        z=lognrnd(mln,sln,mm,1);
+        x(1:mm,i)=z(1:mm,1);
+     elseif type(i)==3   
+        aev=sqrt(6)*sigma(i)/pi;
+        uev=-psi(1)*aev+mu(i);
+        z=evrnd(uev,aev,mm,1);
+        x(1:mm,i)=z(1:mm,1);
+     elseif type(i)==4
+        z=random('wbl',mu(i),sigma(i),mm,1);
+        x(1:mm,i)=z(1:mm,1);
+    end
+    min_x(i)=min(x(1:mm,i)); 
+    max_x(i)=max(x(1:mm,i)); 
+end
+ low=min_x;
+ upp=max_x;
+
+ 
+
+
+function S = lhsamp(m, n)
+%LHSAMP  Latin hypercube distributed random numbers
+%
+% Call:    S = lhsamp
+%          S = lhsamp(m)
+%          S = lhsamp(m, n)
+%
+% m : number of sample points to generate, if unspecified m = 1
+% n : number of dimensions, if unspecified n = m
+%
+% S : the generated n dimensional m sample points chosen from
+%     uniform distributions on m subdivions of the interval (0.0, 1.0)
+
+% hbn@imm.dtu.dk  
+% Last update April 12, 2002
+
+if nargin < 1, m = 1; end
+if nargin < 2, n = m; end
+
+S = zeros(m,n);
+for i = 1 : n
+  S(:, i) = (rand(1, m) + (randperm(m) - 1))' / m;
+end
